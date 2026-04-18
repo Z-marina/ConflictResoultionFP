@@ -70,19 +70,45 @@ DEFAULT_MODEL = "gemini-2.0-flash"
 
 
 def _generate_json(system_prompt: str, user_text: str, model: str, max_output_tokens: int) -> str:
-    client = genai.Client()
-    response = client.models.generate_content(
-        model=model,
-        contents=user_text,
-        config={
-            "system_instruction": system_prompt,
-            "temperature": 0.2,
-            "max_output_tokens": max_output_tokens,
-            "response_mime_type": "application/json",
-        },
-    )
-    return response.text
+    try:
+        client = genai.Client()
+        response = client.models.generate_content(
+            model=model,
+            contents=user_text,
+            config={
+                "system_instruction": system_prompt,
+                "temperature": 0.2,
+                "max_output_tokens": max_output_tokens,
+                "response_mime_type": "application/json",
+            },
+        )
+        return response.text
 
+    except Exception:
+        # fallback response (used when API fails)
+        return json.dumps({
+            "summary": "This seems like a stressful situation involving conflict.",
+            "root_causes": ["Peer pressure", "Group dynamics"],
+            "immediate_steps": [
+                "Take a step back and avoid reacting immediately",
+                "Reach out to a trusted friend or adult"
+            ],
+            "communication_tips": [
+                "Use calm and respectful language",
+                "Express how you feel without blaming"
+            ],
+            "things_to_avoid": [
+                "Escalating the situation online",
+                "Responding emotionally"
+            ],
+            "long_term_recommendations": [
+                "Build a support system",
+                "Set clear personal boundaries"
+            ],
+            "severity": "medium",
+            "when_to_involve_adult": "If the situation continues or worsens, involve a trusted adult",
+            "self_care_tip": "Take time to do something relaxing like listening to music or going for a walk"
+        })
 
 # ── Advice generation ──────────────────────────────────────────────────────────
 

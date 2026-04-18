@@ -6,7 +6,7 @@ import json
 import uuid
 from datetime import datetime
 
-import anthropic
+from google import genai
 
 from models import (
     AnonymousReport,
@@ -66,24 +66,40 @@ Urgency guide:
 - medium: ongoing social conflict, cyberbullying, emotional distress
 - low: minor disputes, rumors, venting"""
 
+DEFAULT_MODEL = "gemini-2.0-flash"
+
+
+def _generate_json(system_prompt: str, user_text: str, model: str, max_output_tokens: int) -> str:
+    client = genai.Client()
+    response = client.models.generate_content(
+        model=model,
+        contents=user_text,
+        config={
+            "system_instruction": system_prompt,
+            "temperature": 0.2,
+            "max_output_tokens": max_output_tokens,
+            "response_mime_type": "application/json",
+        },
+    )
+    return response.text
+
 
 # ── Advice generation ──────────────────────────────────────────────────────────
 
 def get_deescalation_advice(
     conflict_description: str,
     *,
-    model: str = "claude-sonnet-4-20250514",
+    model: str = DEFAULT_MODEL,
     max_tokens: int = 1024,
 ) -> DeescalationAdvice:
     """Return structured de-escalation advice for a conflict description."""
-    client = anthropic.Anthropic()
-    msg = client.messages.create(
-        model=model,
-        max_tokens=max_tokens,
-        system=ADVICE_SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": f"Conflict situation:\n\n{conflict_description}"}],
+    text = _generate_json(
+        ADVICE_SYSTEM_PROMPT,
+        f"Conflict situation:\n\n{conflict_description}",
+        model,
+        max_tokens,
     )
-    data = _parse_json(msg.content[0].text, required_keys={
+    data = _parse_json(text, required_keys={
         "summary", "root_causes", "immediate_steps", "communication_tips",
         "things_to_avoid", "long_term_recommendations", "severity",
         "when_to_involve_adult", "self_care_tip",
@@ -106,18 +122,17 @@ def get_deescalation_advice(
 def classify_report(
     report_text: str,
     *,
-    model: str = "claude-sonnet-4-20250514",
+    model: str = DEFAULT_MODEL,
     max_tokens: int = 512,
 ) -> AnonymousReport:
     """Classify an anonymous report and return a structured AnonymousReport."""
-    client = anthropic.Anthropic()
-    msg = client.messages.create(
-        model=model,
-        max_tokens=max_tokens,
-        system=CLASSIFICATION_SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": f"Anonymous student report:\n\n{report_text}"}],
+    text = _generate_json(
+        CLASSIFICATION_SYSTEM_PROMPT,
+        f"Anonymous student report:\n\n{report_text}",
+        model,
+        max_tokens,
     )
-    data = _parse_json(msg.content[0].text, required_keys={
+    data = _parse_json(text, required_keys={
         "conflict_type", "urgency", "location_inferred", "parties_involved",
         "requires_immediate_action", "summary_for_educator",
         "recommended_staff_action", "keywords_detected",

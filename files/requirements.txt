@@ -1,2 +1,2 @@
-anthropic>=0.49.0
+google-genai
 streamlit>=1.35.0

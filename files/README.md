@@ -7,6 +7,8 @@
 
 ```bash
 pip install -r requirements.txt
+export GEMINI_API_KEY="..."
+# Optional: only needed for LLM-as-judge evaluation
 export ANTHROPIC_API_KEY="sk-..."
 streamlit run app.py
 ```
@@ -28,8 +30,8 @@ conflict_system/
 ### LLM Models Used
 | Task | Model | Rationale |
 |---|---|---|
-| Advice generation | `claude-sonnet-4-20250514` | Fast, cost-efficient for student-facing responses |
-| Report classification | `claude-sonnet-4-20250514` | Same — structured output task |
+| Advice generation | `gemini-2.0-flash` | Fast structured generation for student-facing responses |
+| Report classification | `gemini-2.0-flash` | Fast structured extraction for anonymous reports |
 | LLM-as-judge | `claude-opus-4-5` | Larger model for more reliable evaluation |
 
 ---

@@ -82,7 +82,7 @@ def llm_judge_advice(
 
 def run_advice_evaluation(
     scenario_ids: list[str] | None = None,
-    advice_model: str = "claude-sonnet-4-20250514",
+    advice_model: str = "gemini-2.0-flash",
     judge_model: str = "claude-opus-4-5",
 ) -> list[EvaluationResult]:
     """
@@ -131,7 +131,7 @@ def run_advice_evaluation(
 # ── Run classification evaluation ─────────────────────────────────────────────
 
 def run_classification_evaluation(
-    model: str = "claude-sonnet-4-20250514",
+    model: str = "gemini-2.0-flash",
 ) -> dict:
     """
     Evaluate report classification against ground-truth labels.

@@ -7,7 +7,19 @@
 
 ```bash
 pip install -r requirements.txt
-export GEMINI_API_KEY="..."
+export LLM_BACKEND="ollama"
+export LLM_MODEL="llama3.1:8b"
+export ALLOW_FALLBACK="0"  # optional: fail loudly instead of hardcoded fallback
+# Optional if Ollama is on a different host/port:
+# export OLLAMA_BASE_URL="http://127.0.0.1:11434"
+
+# Pull a local model once:
+# ollama pull llama3.1:8b
+
+# Optional Gemini path (paid API):
+# export LLM_BACKEND="gemini"
+# export GEMINI_API_KEY="..."
+
 # Optional: only needed for LLM-as-judge evaluation
 export ANTHROPIC_API_KEY="sk-..."
 streamlit run app.py

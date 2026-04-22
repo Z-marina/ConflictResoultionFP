@@ -4,10 +4,11 @@ Core LLM pipeline: advice generation + anonymous report classification.
 
 import json
 import os
+import urllib.error
+import urllib.request
 import uuid
 from datetime import datetime
-
-from google import genai
+from typing import Any
 
 from models import (
     AnonymousReport,
@@ -18,7 +19,7 @@ from models import (
     UrgencyLevel,
 )
 
-_genai_client: genai.Client | None = None
+_genai_client: Any | None = None
 
 # ── Prompts ────────────────────────────────────────────────────────────────────
 
@@ -69,16 +70,56 @@ Urgency guide:
 - medium: ongoing social conflict, cyberbullying, emotional distress
 - low: minor disputes, rumors, venting"""
 
-DEFAULT_MODEL = "gemini-2.0-flash"
+DEFAULT_BACKEND = os.getenv("LLM_BACKEND", "ollama").strip().lower()
+DEFAULT_MODEL = os.getenv(
+    "LLM_MODEL",
+    "llama3.1:8b" if DEFAULT_BACKEND == "ollama" else "gemini-2.0-flash",
+)
+ALLOW_FALLBACK = os.getenv("ALLOW_FALLBACK", "1").strip().lower() not in {"0", "false", "no"}
 
 
-def _get_genai_client() -> genai.Client:
+def _get_genai_client():
     global _genai_client
     if _genai_client is None:
+        from google import genai
+
         # The SDK also reads GEMINI_API_KEY from the environment by default.
         api_key = os.getenv("GEMINI_API_KEY")
         _genai_client = genai.Client(api_key=api_key) if api_key else genai.Client()
     return _genai_client
+
+
+def _generate_json_ollama(system_prompt: str, user_text: str, model: str, max_output_tokens: int) -> str:
+    base_url = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
+    url = f"{base_url}/api/chat"
+
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_text},
+        ],
+        "stream": False,
+        "format": "json",
+        "options": {
+            "temperature": 0.2,
+            "num_predict": max_output_tokens,
+        },
+    }
+
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=120) as resp:
+        response_data = json.loads(resp.read().decode("utf-8"))
+
+    content = (response_data.get("message") or {}).get("content", "")
+    if not content:
+        raise ValueError("Ollama returned empty content")
+    return content
 
 
 def _fallback_advice_json(user_text: str) -> str:
@@ -317,18 +358,26 @@ def _fallback_classification_json(report_text: str) -> str:
 
 def _generate_json(system_prompt: str, user_text: str, model: str, max_output_tokens: int) -> str:
     try:
-        client = _get_genai_client()
-        response = client.models.generate_content(
-            model=model,
-            contents=f"{system_prompt}\n\n{user_text}",
-            config={
-                "temperature": 0.2,
-                "max_output_tokens": max_output_tokens,
-                "response_mime_type": "application/json",
-            },
-        )
-        return response.text or ""
+        if DEFAULT_BACKEND == "ollama":
+            return _generate_json_ollama(system_prompt, user_text, model, max_output_tokens)
+
+        if DEFAULT_BACKEND == "gemini":
+            client = _get_genai_client()
+            response = client.models.generate_content(
+                model=model,
+                contents=f"{system_prompt}\n\n{user_text}",
+                config={
+                    "temperature": 0.2,
+                    "max_output_tokens": max_output_tokens,
+                    "response_mime_type": "application/json",
+                },
+            )
+            return response.text or ""
+
+        raise ValueError(f"Unsupported LLM_BACKEND: {DEFAULT_BACKEND}")
     except Exception:
+        if not ALLOW_FALLBACK:
+            raise
         if "conflict_type" in system_prompt and "urgency" in system_prompt:
             return _fallback_classification_json(user_text)
         return _fallback_advice_json(user_text)
@@ -387,15 +436,23 @@ def classify_report(
         "requires_immediate_action", "summary_for_educator",
         "recommended_staff_action", "keywords_detected",
     })
+    conflict_type = _normalize_conflict_type(data.get("conflict_type"))
+    urgency = _normalize_urgency(data.get("urgency"))
+    keywords = data.get("keywords_detected", [])
+    if isinstance(keywords, str):
+        keywords = [keywords]
+    if not isinstance(keywords, list):
+        keywords = []
+
     classification = ReportClassification(
-        conflict_type=ConflictType(data["conflict_type"]),
-        urgency=UrgencyLevel(data["urgency"]),
+        conflict_type=conflict_type,
+        urgency=urgency,
         location_inferred=data.get("location_inferred"),
         parties_involved=data["parties_involved"],
         requires_immediate_action=bool(data["requires_immediate_action"]),
         summary_for_educator=data["summary_for_educator"],
         recommended_staff_action=data["recommended_staff_action"],
-        keywords_detected=data["keywords_detected"],
+        keywords_detected=keywords,
     )
     return AnonymousReport(
         id=str(uuid.uuid4())[:8],
@@ -417,3 +474,58 @@ def _parse_json(text: str, required_keys: set[str]) -> dict:
     if missing:
         raise ValueError(f"Response missing keys: {missing}")
     return data
+
+
+def _normalize_conflict_type(value: object) -> ConflictType:
+    if isinstance(value, ConflictType):
+        return value
+
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return ConflictType.OTHER
+
+    alias_map = {
+        "physical": "physical_conflict",
+        "physical_fight": "physical_conflict",
+        "fight": "physical_conflict",
+        "verbal_harassment": "verbal_harassment",
+        "harassment": "verbal_harassment",
+        "social_exclusion": "social_exclusion",
+        "social_exclusion": "social_exclusion",
+        "cyber_bullying": "cyberbullying",
+        "cyber-bullying": "cyberbullying",
+        "weapon": "weapons",
+        "stalking": "threat",
+    }
+
+    candidates = [raw] + [part.strip() for part in raw.replace("/", "|").replace(",", "|").split("|")]
+    for c in candidates:
+        c = c.replace("-", "_").replace(" ", "_")
+        c = alias_map.get(c, c)
+        try:
+            return ConflictType(c)
+        except ValueError:
+            continue
+
+    return ConflictType.OTHER
+
+
+def _normalize_urgency(value: object) -> UrgencyLevel:
+    if isinstance(value, UrgencyLevel):
+        return value
+
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return UrgencyLevel.MEDIUM
+
+    raw = raw.replace("-", "_").replace(" ", "_")
+    alias_map = {
+        "urgent": "high",
+        "very_urgent": "critical",
+        "immediate": "critical",
+    }
+    raw = alias_map.get(raw, raw)
+    try:
+        return UrgencyLevel(raw)
+    except ValueError:
+        return UrgencyLevel.MEDIUM
